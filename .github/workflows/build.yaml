@@ -2,7 +2,7 @@
 name: Build bootc image with GHA
 on:
   schedule:
-#weekly updates - change as needed
+    #weekly updates - change as needed
     - cron: "0 0 * * 5"
   workflow_dispatch:
   push:
@@ -14,14 +14,14 @@ jobs:
     name: Build bootc image
 
     #change ubuntu-latest to runner if using the included gitea configs
-    runs-on: ubuntu-latest 
+    runs-on: ubuntu-latest
     env:
-      IMAGE_NAME: bootc-example
-      REGISTRY: ghcr.io/[USERNAME]
-   
+      IMAGE_NAME: hetzner-bare-metal-bootc
+      REGISTRY: ghcr.io/${{ github.repository_owner }}
+
     steps:
       - name: Clone the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout
 
       - name: Use buildah bud to create the image
         id: build-image
@@ -35,7 +35,7 @@ jobs:
       # workaround for https://github.com/redhat-actions/podman-login/issues/42 since the docker config from the host doesn't come up to the container
       - name: Workaround open podman-login action issue
         env:
-          auth: "{ \"auths\": {} }"
+          auth: '{ "auths": {} }'
         run: |
           mkdir -p $HOME/.docker
           echo $auth > $HOME/.docker/config.json
