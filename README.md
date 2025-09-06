@@ -1,3 +1,3 @@
-# fedora-bootc-gitops
+# Purpose
 
-This repo hosts some example configuration files I found helpful when moving my systems to bootc and managing them w/ github/gitea actions.
+Build the base image for deploy to Hetzner bare metal
