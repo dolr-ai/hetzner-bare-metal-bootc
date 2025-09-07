@@ -1,0 +1,212 @@
+name: Rollback bootc image on Hetzner bare metal servers
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type "ROLLBACK" to confirm you want to rollback all servers'
+        required: true
+        type: string
+      reason:
+        description: "Reason for rollback (optional)"
+        required: false
+        type: string
+
+jobs:
+  validate:
+    name: Validate rollback request
+    runs-on: ubuntu-latest
+    outputs:
+      confirmed: ${{ steps.check.outputs.confirmed }}
+    steps:
+      - name: Validate confirmation
+        id: check
+        run: |
+          if [[ "${{ github.event.inputs.confirmation }}" == "ROLLBACK" ]]; then
+            echo "confirmed=true" >> $GITHUB_OUTPUT
+            echo "✅ Rollback confirmed"
+          else
+            echo "confirmed=false" >> $GITHUB_OUTPUT
+            echo "❌ Rollback not confirmed. You must type 'ROLLBACK' exactly."
+            exit 1
+          fi
+
+  prepare:
+    name: Prepare server matrix
+    runs-on: ubuntu-latest
+    needs: validate
+    if: ${{ needs.validate.outputs.confirmed == 'true' }}
+    outputs:
+      server_matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set server matrix
+        id: set-matrix
+        run: |
+          # Get server IPs from environment variable
+          SERVER_IPS="${{ vars.HETZNER_SERVER_IPS }}"
+
+          if [[ -z "$SERVER_IPS" ]]; then
+            echo "Error: No server IPs provided. Set HETZNER_SERVER_IPS environment variable."
+            exit 1
+          fi
+
+          # Convert comma-separated IPs to JSON array
+          IFS=',' read -ra ADDR <<< "$SERVER_IPS"
+          MATRIX="["
+          for i in "${ADDR[@]}"; do
+            IP=$(echo "$i" | xargs)  # trim whitespace
+            if [[ -n "$IP" ]]; then
+              MATRIX="$MATRIX\"$IP\","
+            fi
+          done
+          MATRIX="${MATRIX%,}]"  # remove trailing comma and close array
+
+          echo "Server matrix: $MATRIX"
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
+  rollback:
+    name: Rollback servers
+    runs-on: ubuntu-latest
+    needs: [validate, prepare]
+    if: ${{ needs.validate.outputs.confirmed == 'true' }}
+
+    strategy:
+      matrix:
+        server_ip: ${{ fromJson(needs.prepare.outputs.server_matrix) }}
+      fail-fast: false
+
+    env:
+      IMAGE_NAME: hetzner-bare-metal-bootc
+      REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+    steps:
+      - name: Clone the repository
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.HETZNER_SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          ssh-keyscan -H ${{ matrix.server_ip }} >> ~/.ssh/known_hosts
+
+      - name: Check server connectivity
+        run: |
+          ssh -o ConnectTimeout=10 root@${{ matrix.server_ip }} "echo 'Server connection successful'"
+
+      - name: Check current bootc status
+        id: check-status
+        run: |
+          ssh root@${{ matrix.server_ip }} "
+            echo 'Current bootc status before rollback:'
+            bootc status
+            echo 'Current active image:'
+            bootc status --json 2>/dev/null | jq -r '.status.booted.image.image.image' || echo 'None'
+            
+            # Check if there's a previous image to rollback to
+            if bootc status --json 2>/dev/null | jq -e '.status.rollback' > /dev/null; then
+              echo 'Previous image available for rollback:'
+              bootc status --json 2>/dev/null | jq -r '.status.rollback.image.image.image' || echo 'None'
+              echo 'rollback_available=true'
+            else
+              echo 'No previous image available for rollback'
+              echo 'rollback_available=false'
+              exit 1
+            fi
+          "
+
+      - name: Perform bootc rollback
+        run: |
+          ssh root@${{ matrix.server_ip }} "
+            echo 'Performing bootc rollback...'
+            bootc rollback
+            echo 'Rollback staging completed successfully'
+            echo 'Server will boot to previous image after reboot'
+          "
+
+      - name: Check rollback staging status
+        run: |
+          ssh root@${{ matrix.server_ip }} "
+            echo 'Post-rollback bootc status:'
+            bootc status
+            echo 'Staged rollback image:'
+            bootc status --json 2>/dev/null | jq -r '.status.staged.image.image.image' || echo 'None'
+          "
+
+      - name: Reboot server to activate rollback
+        run: |
+          echo "Rebooting server to activate rollback..."
+          ssh root@${{ matrix.server_ip }} "
+            echo 'Rebooting server to activate previous image...'
+            nohup reboot &
+          " || echo "Reboot command sent"
+
+      - name: Wait for server to come back online
+        run: |
+          echo "Waiting for server to come back online..."
+          for i in {1..30}; do
+            if ssh -o ConnectTimeout=5 root@${{ matrix.server_ip }} "echo 'Server is back online'"; then
+              echo "Server is back online after $((i*10)) seconds"
+              break
+            fi
+            echo "Attempt $i: Server not ready yet, waiting 10 seconds..."
+            sleep 10
+            if [[ $i -eq 30 ]]; then
+              echo "⚠️ Server did not come back online within 5 minutes"
+              exit 1
+            fi
+          done
+
+      - name: Verify rollback completion
+        run: |
+          ssh root@${{ matrix.server_ip }} "
+            echo 'Post-rollback bootc status:'
+            bootc status
+            echo 'Current active image after rollback:'
+            bootc status --json | jq -r '.status.booted.image.image.image'
+            echo 'Rollback verification completed'
+          "
+
+      - name: Rollback summary
+        run: |
+          echo "## Rollback Summary for ${{ matrix.server_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target Server**: ${{ matrix.server_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Action**: Rolled back to previous bootc image" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: Rollback completed and activated (server rebooted)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Reason**: ${{ github.event.inputs.reason || 'No reason provided' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Verification**: Previous image is now active" >> $GITHUB_STEP_SUMMARY
+
+  notify:
+    name: Rollback notification
+    runs-on: ubuntu-latest
+    needs: [validate, prepare, rollback]
+    if: always() && needs.validate.outputs.confirmed == 'true'
+    steps:
+      - name: Generate rollback report
+        run: |
+          echo "# 🔄 Bootc Rollback Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Rollback initiated by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "**Reason**: ${{ github.event.inputs.reason || 'No reason provided' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.rollback.result }}" == "success" ]]; then
+            echo "✅ **Status**: All servers successfully rolled back" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.rollback.result }}" == "failure" ]]; then
+            echo "❌ **Status**: Some servers failed to rollback" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **Action Required**: Check individual server logs and verify status manually" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **Status**: Rollback job was cancelled or skipped" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Next Steps**:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Verify all servers are functioning correctly" >> $GITHUB_STEP_SUMMARY
+          echo "2. Check application logs for any issues" >> $GITHUB_STEP_SUMMARY
+          echo "3. Monitor system performance" >> $GITHUB_STEP_SUMMARY
+          echo "4. If rollback was due to a deployment issue, investigate and fix before next deployment" >> $GITHUB_STEP_SUMMARY

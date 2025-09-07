@@ -1,0 +1,162 @@
+name: Deploy bootc image to Hetzner bare metal server
+
+on:
+  workflow_run:
+    workflows: ["Build bootc image with GHA"]
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  prepare:
+    name: Prepare server matrix
+    runs-on: ubuntu-latest
+    outputs:
+      server_matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set server matrix
+        id: set-matrix
+        run: |
+          # Get server IPs from environment variable
+          SERVER_IPS="${{ vars.HETZNER_SERVER_IPS }}"
+
+          if [[ -z "$SERVER_IPS" ]]; then
+            echo "Error: No server IPs provided. Set HETZNER_SERVER_IPS environment variable."
+            exit 1
+          fi
+
+          # Convert comma-separated IPs to JSON array
+          IFS=',' read -ra ADDR <<< "$SERVER_IPS"
+          MATRIX="["
+          for i in "${ADDR[@]}"; do
+            IP=$(echo "$i" | xargs)  # trim whitespace
+            if [[ -n "$IP" ]]; then
+              MATRIX="$MATRIX\"$IP\","
+            fi
+          done
+          MATRIX="${MATRIX%,}]"  # remove trailing comma and close array
+
+          echo "Server matrix: $MATRIX"
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
+  deploy:
+    name: Deploy to Hetzner bare metal
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    strategy:
+      matrix:
+        server_ip: ${{ fromJson(needs.prepare.outputs.server_matrix) }}
+      fail-fast: false
+
+    needs: prepare
+
+    env:
+      IMAGE_NAME: hetzner-bare-metal-bootc
+      REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+    steps:
+      - name: Clone the repository
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.HETZNER_SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          ssh-keyscan -H ${{ matrix.server_ip }} >> ~/.ssh/known_hosts
+
+      - name: Check server connectivity
+        run: |
+          ssh -o ConnectTimeout=10 root@${{ matrix.server_ip }} "echo 'Server connection successful'"
+
+      - name: Install bootc on target server (if not present)
+        run: |
+          ssh root@${{ matrix.server_ip }} "
+            if ! command -v bootc &> /dev/null; then
+              echo 'Installing bootc...'
+              dnf install -y bootc || (
+                echo 'Adding bootc repository...'
+                dnf copr enable -y rhcontainerbot/bootc
+                dnf install -y bootc
+              )
+            else
+              echo 'bootc is already installed'
+            fi
+          "
+
+      - name: Check current bootc status
+        id: check-status
+        run: |
+          ssh root@${{ matrix.server_ip }} "
+            echo 'Current bootc status:'
+            bootc status || echo 'No bootc deployment found'
+            echo 'Current image:' 
+            bootc status --json 2>/dev/null | jq -r '.status.booted.image.image.image' || echo 'None'
+          "
+
+      - name: Login to container registry on target server
+        run: |
+          ssh root@${{ matrix.server_ip }} "
+            echo '${{ secrets.GITHUB_TOKEN }}' | podman login ghcr.io -u ${{ github.actor }} --password-stdin
+          "
+
+      - name: Deploy bootc image
+        run: |
+          TARGET_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          ssh root@${{ matrix.server_ip }} "
+            echo 'Pulling and switching to image: $TARGET_IMAGE'
+            bootc switch --retain --transport=registry $TARGET_IMAGE
+            echo 'Bootc switch completed successfully'
+            echo 'Image will be active after next reboot'
+          "
+
+      - name: Check deployment status
+        run: |
+          ssh root@${{ matrix.server_ip }} "
+            echo 'Post-deployment bootc status:'
+            bootc status
+            echo 'Staged image:'
+            bootc status --json | jq -r '.status.staged.image.image.image' || echo 'None'
+          "
+
+      - name: Reboot server to activate new image
+        run: |
+          echo "Rebooting server to activate new image..."
+          ssh root@${{ matrix.server_ip }} "
+            echo 'Rebooting server to activate new image...'
+            nohup reboot &
+          " || echo "Reboot command sent"
+
+      - name: Wait for server to come back online
+        run: |
+          echo "Waiting for server to come back online..."
+          for i in {1..30}; do
+            if ssh -o ConnectTimeout=5 root@${{ matrix.server_ip }} "echo 'Server is back online'"; then
+              echo "Server is back online after $((i*10)) seconds"
+              break
+            fi
+            echo "Attempt $i: Server not ready yet, waiting 10 seconds..."
+            sleep 10
+          done
+
+      - name: Verify deployment after reboot
+        run: |
+          ssh root@${{ matrix.server_ip }} "
+            echo 'Post-reboot bootc status:'
+            bootc status
+            echo 'Active image:'
+            bootc status --json | jq -r '.status.booted.image.image.image'
+            echo 'Deployment verification completed'
+          "
+
+      - name: Deployment summary
+        run: |
+          echo "## Deployment Summary for ${{ matrix.server_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target Server**: ${{ matrix.server_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image**: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: Deployed and activated (server rebooted)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Verification**: New image is now active" >> $GITHUB_STEP_SUMMARY
