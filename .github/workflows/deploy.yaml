@@ -88,13 +88,19 @@ jobs:
       - name: Check current bootc status and determine deployment type
         id: check-status
         run: |
-          DEPLOYMENT_TYPE=$(ssh root@${{ matrix.server_ip }} "
+          ssh root@${{ matrix.server_ip }} "
             if bootc status &>/dev/null; then
               echo 'Current bootc status:'
               bootc status
-              echo 'switch'
             else
               echo 'No existing bootc deployment found - will perform initial installation'
+            fi
+          "
+
+          DEPLOYMENT_TYPE=$(ssh root@${{ matrix.server_ip }} "
+            if bootc status &>/dev/null; then
+              echo 'switch'
+            else
               echo 'install'
             fi
           ")
