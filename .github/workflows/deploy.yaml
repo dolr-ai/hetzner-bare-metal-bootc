@@ -19,10 +19,10 @@ jobs:
         id: set-matrix
         run: |
           # Get server IPs from environment variable
-          SERVER_IPS="${{ vars.HETZNER_SERVER_IPS }}"
+          SERVER_IPS="${{ vars.HETZNER_BARE_METAL_DEPLOY_TARGET_SERVER_IPS }}"
 
           if [[ -z "$SERVER_IPS" ]]; then
-            echo "Error: No server IPs provided. Set HETZNER_SERVER_IPS environment variable."
+            echo "Error: No server IPs provided. Set HETZNER_BARE_METAL_DEPLOY_TARGET_SERVER_IPS environment variable."
             exit 1
           fi
 
@@ -63,7 +63,7 @@ jobs:
       - name: Setup SSH key
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.HETZNER_SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ secrets.HETZNER_BARE_METAL_GITHUB_ACTIONS_SSH_PRIVATE_KEY }}
 
       - name: Add server to known hosts
         run: |

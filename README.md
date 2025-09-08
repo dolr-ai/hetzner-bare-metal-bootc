@@ -20,20 +20,21 @@ Set up the following in your GitHub repository:
 
 #### Repository Variables (Settings → Secrets and variables → Actions → Variables tab)
 
-1. **`HETZNER_SERVER_IPS`** - Comma-separated list of server IP addresses
+1. **`HETZNER_BARE_METAL_DEPLOY_TARGET_SERVER_IPS`** - Comma-separated list of server IP addresses
    ```
    Example: 1.2.3.4,5.6.7.8,9.10.11.12
    ```
 
 #### Repository Secrets (Settings → Secrets and variables → Actions → Secrets tab)
 
-1. **`HETZNER_SSH_PRIVATE_KEY`** - Your SSH private key for accessing the Hetzner server(s)
+1. **`HETZNER_BARE_METAL_GITHUB_ACTIONS_SSH_PRIVATE_KEY`** - Your SSH private key for accessing the Hetzner server(s)
    ```bash
    # Generate a new SSH key pair (if you don't have one)
-   ssh-keygen -t ed25519 -C "github-actions@yourdomain.com" -f ~/.ssh/hetzner_deploy
+   ssh-keygen -t ed25519 -C "github-actions@yral.com" -f ~/.ssh/hetzner_deploy
    
    # Add the public key to your server(s) authorized_keys
-   ssh-copy-id -i ~/.ssh/hetzner_deploy.pub root@YOUR_SERVER_IP
+   ssh-copy-id -i ~/.ssh/hetzner_deploy.pub root@94.130.128.93
+   ssh-copy-id -i ~/.ssh/hetzner_deploy.pub root@88.99.160.251
    
    # Copy the private key content to GitHub secrets
    cat ~/.ssh/hetzner_deploy
@@ -44,7 +45,7 @@ Set up the following in your GitHub repository:
 ### Deployment Options
 
 #### Fully Automated GitOps Deployment
-The deployment workflow automatically triggers when the build workflow completes successfully on the `main` branch. It will deploy to all servers specified in the `HETZNER_SERVER_IPS` environment variable and automatically reboot them to activate the new image.
+The deployment workflow automatically triggers when the build workflow completes successfully on the `main` branch. It will deploy to all servers specified in the `HETZNER_BARE_METAL_DEPLOY_TARGET_SERVER_IPS` environment variable and automatically reboot them to activate the new image.
 
 **Automated GitOps Flow:**
 1. Push code to `main` branch
