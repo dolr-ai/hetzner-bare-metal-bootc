@@ -98,7 +98,8 @@ jobs:
           "
 
           DEPLOYMENT_TYPE=$(ssh root@${{ matrix.server_ip }} "
-            if bootc status &>/dev/null; then
+            # Check if system is actually booted from a bootc image
+            if bootc status --json &>/dev/null && bootc status --json | jq -e '.status.booted.image' &>/dev/null; then
               echo 'switch'
             else
               echo 'install'
