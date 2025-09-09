@@ -1,10 +1,6 @@
 name: Deploy bootc image to Hetzner bare metal server
 
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
   workflow_run:
     workflows: ["Build bootc image with GHA"]
     types:
