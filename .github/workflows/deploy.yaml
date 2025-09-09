@@ -86,26 +86,11 @@ jobs:
           "
 
       - name: Check current bootc status and determine deployment type
-        id: check-status
         run: |
           ssh root@${{ matrix.server_ip }} "
-            if bootc status &>/dev/null; then
-              echo 'Current bootc status:'
-              bootc status
-            else
-              echo 'No existing bootc deployment found - will perform initial installation'
-            fi
+            echo 'Current bootc status:'
+            bootc status
           "
-
-          DEPLOYMENT_TYPE=$(ssh root@${{ matrix.server_ip }} "
-            # Check if system is actually booted from a bootc image
-            if bootc status --json &>/dev/null && bootc status --json | jq -e '.status.booted.image' &>/dev/null; then
-              echo 'switch'
-            else
-              echo 'install'
-            fi
-          ")
-          echo "deployment_type=$DEPLOYMENT_TYPE" >> $GITHUB_OUTPUT
 
       - name: Login to container registry on target server
         run: |
@@ -113,35 +98,13 @@ jobs:
             echo '${{ secrets.GITHUB_TOKEN }}' | podman login ghcr.io -u ${{ github.actor }} --password-stdin
           "
 
-      - name: Get target disk device
-        id: get-disk
-        if: steps.check-status.outputs.deployment_type == 'install'
-        run: |
-          DISK_DEVICE=$(ssh root@${{ matrix.server_ip }} "
-            # Find the primary disk device (usually the boot disk)
-            lsblk -d -o NAME,TYPE | grep disk | head -1 | awk '{print \"/dev/\" \$1}'
-          ")
-          echo "disk_device=$DISK_DEVICE" >> $GITHUB_OUTPUT
-          echo "Target disk device: $DISK_DEVICE"
+      # Removed bootc install flow
 
-      - name: Perform initial bootc installation
-        if: steps.check-status.outputs.deployment_type == 'install'
-        run: |
-          TARGET_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
-          DISK_DEVICE="${{ steps.get-disk.outputs.disk_device }}"
-          ssh root@${{ matrix.server_ip }} "
-            echo 'Performing initial bootc installation to device: $DISK_DEVICE'
-            echo 'Installing image: $TARGET_IMAGE'
-            bootc install to-disk --source-imgref $TARGET_IMAGE $DISK_DEVICE
-            echo 'Initial bootc installation completed successfully'
-          "
-
-      - name: Update existing bootc deployment
-        if: steps.check-status.outputs.deployment_type == 'switch'
+      - name: Update bootc deployment
         run: |
           TARGET_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
           ssh root@${{ matrix.server_ip }} "
-            echo 'Updating existing bootc deployment'
+            echo 'Updating bootc deployment'
             echo 'Switching to image: $TARGET_IMAGE'
             bootc switch --retain --transport=registry $TARGET_IMAGE
             echo 'Bootc switch completed successfully'
@@ -151,7 +114,7 @@ jobs:
         run: |
           ssh root@${{ matrix.server_ip }} "
             echo 'Post-deployment bootc status:'
-            bootc status || echo 'Bootc status not available yet (normal for fresh installs)'
+            bootc status || echo 'Bootc status not available yet'
             if bootc status --json &>/dev/null; then
               echo 'Staged image:'
               bootc status --json | jq -r '.status.staged.image.image.image' 2>/dev/null || echo 'None'
@@ -193,6 +156,5 @@ jobs:
           echo "## Deployment Summary for ${{ matrix.server_ip }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Target Server**: ${{ matrix.server_ip }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Image**: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
-          echo "- **Deployment Type**: ${{ steps.check-status.outputs.deployment_type }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Status**: Deployed and activated (server rebooted)" >> $GITHUB_STEP_SUMMARY
           echo "- **Verification**: New image is now active" >> $GITHUB_STEP_SUMMARY

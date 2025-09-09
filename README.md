@@ -183,4 +183,7 @@ This bootc image includes:
 
 Edit the `Containerfile` to add additional software or configuration to your bootc image.
 
-bootc install to-existing-root --source-imgref ghcr.io/dolr-ai/hetzner-bare-metal-bootc:latest
+# New Hetzner Online Bare Metal machine steps:
+- installimage to CentOS Stream 10 image with RAID turned off
+- dnf install system-reinstall-bootc -y
+- system-reinstall-bootc ghcr.io/dolr-ai/hetzner-bare-metal-bootc:latest
