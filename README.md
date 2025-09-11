@@ -187,4 +187,4 @@ Edit the `Containerfile` to add additional software or configuration to your boo
 - installimage to CentOS Stream 10 image with RAID turned off
 - dnf update -y
 - dnf install system-reinstall-bootc -y
-- system-reinstall-bootc ghcr.io/dolr-ai/hetzner-bare-metal-bootc:latest
+- system-reinstall-bootc ghcr.io/saikatdas0790/hetzner-sia-experiment:latest
