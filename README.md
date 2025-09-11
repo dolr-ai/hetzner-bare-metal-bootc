@@ -185,5 +185,6 @@ Edit the `Containerfile` to add additional software or configuration to your boo
 
 # New Hetzner Online Bare Metal machine steps:
 - installimage to CentOS Stream 10 image with RAID turned off
+- dnf update -y
 - dnf install system-reinstall-bootc -y
 - system-reinstall-bootc ghcr.io/dolr-ai/hetzner-bare-metal-bootc:latest
