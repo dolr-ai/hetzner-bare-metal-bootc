@@ -1,9 +1,6 @@
 #inspired from https://github.com/nzwulfin/cicd-bootc/blob/main/.github/workflows/build_fedora_bootc.yml
 name: Build bootc image with GHA
 on:
-  schedule:
-    #weekly updates - change as needed
-    - cron: "0 0 * * 5"
   workflow_dispatch:
   push:
     branches:
